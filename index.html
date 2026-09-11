@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AQUA-VOLT System Monitor</title>
   
+  <!-- p5.js Core Library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <!-- p5.ble.js Library -->
+  <script src="https://unpkg.com/p5ble@0.0.7/dist/p5.ble.js"></script>
 
   <style>
     body {
@@ -28,32 +31,35 @@
   </style>
 </head>
 <body>
+
   <script>
     /************************************************************
      AQUA-VOLT DRAIN CLEANER - WEB DASHBOARD
-     p5.js Mode
-     Function: 
-     - Wi-Fi Data Fetching (ESP32 Integration)
-     - Dynamic Wave Animation (0cm = Empty, 30cm = Full)
-     - Test Mode Toggle Button
-     - Browser Notification for Flood Warning
+     p5.js Mode (Single-File Web Bluetooth Version)
     ************************************************************/
 
+    // --- BLE UUID CONFIGURATION ---
+    const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+
     // --- SYSTEM SETTINGS ---
-    // NOTE: This must be changed to an HTTPS endpoint to bypass GitHub Pages Mixed Content blocks.
-    const ESP32_IP = "http://192.168.1.100/data"; 
     const WATER_LIMIT = 25; // Flood triggers when water is >= 25cm
     const TANK_DEPTH = 30;  // Max water level capacity
 
+    // --- BLE STATE VARIABLES ---
+    let myBLE;
+    let isConnected = false;
+
     // --- VARIABLES ---
-    let currentDistance = 0; // Default starting value (Empty)
+    let currentDistance = 0; 
     let waveTime = 0;
     let floodAlertTriggered = false;
-    let lastFetchTime = 0;
 
-    // Test Mode Variables
+    // Buttons Coordinates
+    let testBtnX, testBtnY, testBtnW, testBtnH;
+    let btBtnX, btBtnY, btBtnW, btBtnH;
+
+    // Test Mode Variable
     let testMode = false;
-    let btnX, btnY, btnW, btnH;
 
     // Tank graphical coordinates
     let tankX, tankY, tankW, tankH;
@@ -61,17 +67,25 @@
     function setup() {
       createCanvas(800, 500);
       
+      // Initialize p5.ble.js
+      myBLE = new p5ble();
+
       // Define tank dimensions and placement 
       tankW = 200;
       tankH = 300;
       tankX = width - tankW - 100;
       tankY = height / 2 - tankH / 2 + 40;
 
-      // Define Test Mode Button dimensions and placement
-      btnW = 160;
-      btnH = 35;
-      btnX = width / 2 - btnW / 2;
-      btnY = 60;
+      // Define Top Control Buttons
+      btBtnW = 180;
+      btBtnH = 35;
+      btBtnX = width / 2 - btBtnW - 10;
+      btBtnY = 60;
+
+      testBtnW = 160;
+      testBtnH = 35;
+      testBtnX = width / 2 + 10;
+      testBtnY = 60;
     }
 
     function draw() {
@@ -83,7 +97,23 @@
       textSize(28);
       text("AQUA-VOLT SYSTEM MONITOR", width / 2, 20);
 
-      // 2. DRAW TEST MODE BUTTON
+      // 2. DRAW CONNECT BLUETOOTH BUTTON
+      if (isConnected) {
+        fill(40, 167, 69); // Green when connected
+      } else {
+        fill(0, 123, 255); // Blue when disconnected
+      }
+      stroke(200);
+      strokeWeight(2);
+      rect(btBtnX, btBtnY, btBtnW, btBtnH, 8);
+      
+      fill(255);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(14);
+      text(isConnected ? "BT: CONNECTED" : "CONNECT BLUETOOTH", btBtnX + btBtnW / 2, btBtnY + btBtnH / 2);
+
+      // 3. DRAW TEST MODE BUTTON
       if (testMode) {
         fill(200, 50, 50); // Red when ON
       } else {
@@ -91,31 +121,23 @@
       }
       stroke(200);
       strokeWeight(2);
-      rect(btnX, btnY, btnW, btnH, 8);
+      rect(testBtnX, testBtnY, testBtnW, testBtnH, 8);
       
       fill(255);
       noStroke();
       textAlign(CENTER, CENTER);
-      textSize(16);
-      text(testMode ? "TEST MODE: ON" : "TEST MODE: OFF", btnX + btnW / 2, btnY + btnH / 2);
+      textSize(14);
+      text(testMode ? "TEST MODE: ON" : "TEST MODE: OFF", testBtnX + testBtnW / 2, testBtnY + testBtnH / 2);
       
-      // 3. DATA FETCHING OR SIMULATION
-      if (!testMode) {
-        // Normal Mode: Fetch data every 1 second
-        if (millis() - lastFetchTime > 1000) {
-          getWaterLevelFromESP32();
-          lastFetchTime = millis();
-        }
-      } else {
-        // Test Mode: Mouse Y position controls water level
+      // 4. TEST MODE SIMULATION OVERRIDE
+      if (testMode) {
         if (mouseX > 0 && mouseX < width && mouseY > 0 && mouseY < height) {
-          // Map mouse: Bottom of screen = 0cm, Top of screen = 30cm
           currentDistance = map(mouseY, height, 0, 0, TANK_DEPTH);
           currentDistance = constrain(currentDistance, 0, TANK_DEPTH);
         }
       }
 
-      // 4. UI: LEFT SIDE DATA DISPLAY
+      // 5. UI: LEFT SIDE DATA DISPLAY
       textAlign(LEFT, CENTER);
       
       fill(45);
@@ -135,13 +157,12 @@
       textSize(24);
       text("Water Level:", 70, tankY + 100);
       
-      // Color code logic (Inverted: Higher numbers are more dangerous)
       if (currentDistance >= WATER_LIMIT) {
-        fill(255, 50, 50); // Red for danger
+        fill(255, 50, 50); // Red
       } else if (currentDistance >= WATER_LIMIT - 5) {
-        fill(255, 200, 50); // Yellow for warning
+        fill(255, 200, 50); // Yellow
       } else {
-        fill(50, 255, 100); // Green for safe
+        fill(50, 255, 100); // Green
       }
       textSize(36);
       text(currentDistance.toFixed(1) + " cm", 70, tankY + 140);
@@ -151,13 +172,12 @@
       text("Safety Limit: " + WATER_LIMIT + " cm", 70, tankY + 200);
       text("Status: " + (currentDistance >= WATER_LIMIT ? "FLOODING / MOTOR STOP" : "NORMAL"), 70, tankY + 230);
 
-      // 5. UI: RIGHT SIDE TANK & WAVE ANIMATION
+      // 6. UI: RIGHT SIDE TANK & WAVE ANIMATION
       fill(20);
       stroke(150);
       strokeWeight(4);
       rect(tankX, tankY, tankW, tankH);
 
-      // MAPPING UPDATE: 0 = Bottom of tank, TANK_DEPTH = Top of tank
       let waterY = map(currentDistance, 0, TANK_DEPTH, tankY + tankH, tankY);
       waterY = constrain(waterY, tankY, tankY + tankH);
 
@@ -183,7 +203,7 @@
 
       waveTime += 0.08;
 
-      // 6. FLOOD NOTIFICATION SYSTEM
+      // 7. FLOOD NOTIFICATION SYSTEM
       if (currentDistance >= WATER_LIMIT) {
         if (frameCount % 60 < 30) {
           fill(255, 0, 0);
@@ -204,26 +224,47 @@
       }
     }
 
-    // --- BUTTON CLICK EVENT ---
+    // --- BUTTON CLICK EVENTS ---
     function mousePressed() {
-      // Check if mouse clicks inside the Test Mode button
-      if (mouseX > btnX && mouseX < btnX + btnW && mouseY > btnY && mouseY < btnY + btnH) {
+      // Bluetooth Connect Click Handler
+      if (mouseX > btBtnX && mouseX < btBtnX + btBtnW && mouseY > btBtnY && mouseY < btBtnY + btBtnH) {
+        if (!isConnected) {
+          myBLE.connect(SERVICE_UUID, gotCharacteristics);
+        }
+      }
+
+      // Test Mode Toggle Click Handler
+      if (mouseX > testBtnX && mouseX < testBtnX + testBtnW && mouseY > testBtnY && mouseY < testBtnY + testBtnH) {
         testMode = !testMode;
       }
     }
 
-    // --- WI-FI DATA FUNCTION ---
-    function getWaterLevelFromESP32() {
-      fetch(ESP32_IP)
-        .then(response => response.json()) 
-        .then(data => {
-          if (data.waterLevel !== undefined) {
-            currentDistance = data.waterLevel; 
-          }
-        })
-        .catch(error => {
-          // console.log("ESP32 not connected.");
-        });
+    // --- p5.ble.js CALLBACKS ---
+    function gotCharacteristics(error, characteristics) {
+      if (error) {
+        console.error('Connection error: ', error);
+        alert("Bluetooth pairing failed or was canceled.");
+        return;
+      }
+      
+      isConnected = true;
+      console.log("Bluetooth Connected!");
+      
+      // Set p5.ble to listen for changes and parse the payload as a string
+      myBLE.startNotifications(characteristics[0], handleBleData, 'string');
+    }
+
+    function handleBleData(value) {
+      if (testMode) return; // Skip updating from sensor if user is actively testing
+
+      try {
+        let data = JSON.parse(value);
+        if (data.waterLevel !== undefined) {
+          currentDistance = data.waterLevel;
+        }
+      } catch (err) {
+        console.error("Failed to parse BLE packet:", value);
+      }
     }
   </script>
 </body>
