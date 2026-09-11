@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AQUA-VOLT System Monitor</title>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #121212; 
+      color: #ffffff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    
+    canvas {
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.8);
+      border-radius: 12px;
+      border: 2px solid #333;
+    }
+  </style>
+</head>
+<body>
+  <script>
+    /************************************************************
+     AQUA-VOLT DRAIN CLEANER - WEB DASHBOARD
+     p5.js Mode
+     Function: 
+     - Wi-Fi Data Fetching (ESP32 Integration)
+     - Dynamic Wave Animation (0cm = Empty, 30cm = Full)
+     - Test Mode Toggle Button
+     - Browser Notification for Flood Warning
+    ************************************************************/
+
+    // --- SYSTEM SETTINGS ---
+    // NOTE: This must be changed to an HTTPS endpoint to bypass GitHub Pages Mixed Content blocks.
+    const ESP32_IP = "http://192.168.1.100/data"; 
+    const WATER_LIMIT = 25; // Flood triggers when water is >= 25cm
+    const TANK_DEPTH = 30;  // Max water level capacity
+
+    // --- VARIABLES ---
+    let currentDistance = 0; // Default starting value (Empty)
+    let waveTime = 0;
+    let floodAlertTriggered = false;
+    let lastFetchTime = 0;
+
+    // Test Mode Variables
+    let testMode = false;
+    let btnX, btnY, btnW, btnH;
+
+    // Tank graphical coordinates
+    let tankX, tankY, tankW, tankH;
+
+    function setup() {
+      createCanvas(800, 500);
+      
+      // Define tank dimensions and placement 
+      tankW = 200;
+      tankH = 300;
+      tankX = width - tankW - 100;
+      tankY = height / 2 - tankH / 2 + 40;
+
+      // Define Test Mode Button dimensions and placement
+      btnW = 160;
+      btnH = 35;
+      btnX = width / 2 - btnW / 2;
+      btnY = 60;
+    }
+
+    function draw() {
+      background(30);
+
+      // 1. HEADER
+      fill(255);
+      textAlign(CENTER, TOP);
+      textSize(28);
+      text("AQUA-VOLT SYSTEM MONITOR", width / 2, 20);
+
+      // 2. DRAW TEST MODE BUTTON
+      if (testMode) {
+        fill(200, 50, 50); // Red when ON
+      } else {
+        fill(70); // Gray when OFF
+      }
+      stroke(200);
+      strokeWeight(2);
+      rect(btnX, btnY, btnW, btnH, 8);
+      
+      fill(255);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(16);
+      text(testMode ? "TEST MODE: ON" : "TEST MODE: OFF", btnX + btnW / 2, btnY + btnH / 2);
+      
+      // 3. DATA FETCHING OR SIMULATION
+      if (!testMode) {
+        // Normal Mode: Fetch data every 1 second
+        if (millis() - lastFetchTime > 1000) {
+          getWaterLevelFromESP32();
+          lastFetchTime = millis();
+        }
+      } else {
+        // Test Mode: Mouse Y position controls water level
+        if (mouseX > 0 && mouseX < width && mouseY > 0 && mouseY < height) {
+          // Map mouse: Bottom of screen = 0cm, Top of screen = 30cm
+          currentDistance = map(mouseY, height, 0, 0, TANK_DEPTH);
+          currentDistance = constrain(currentDistance, 0, TANK_DEPTH);
+        }
+      }
+
+      // 4. UI: LEFT SIDE DATA DISPLAY
+      textAlign(LEFT, CENTER);
+      
+      fill(45);
+      stroke(100);
+      strokeWeight(2);
+      rect(50, tankY, 300, tankH, 10);
+      
+      noStroke();
+      fill(200);
+      textSize(18);
+      text("CURRENT SENSOR DATA", 70, tankY + 30);
+      
+      stroke(100);
+      line(70, tankY + 50, 330, tankY + 50);
+      
+      noStroke();
+      textSize(24);
+      text("Water Level:", 70, tankY + 100);
+      
+      // Color code logic (Inverted: Higher numbers are more dangerous)
+      if (currentDistance >= WATER_LIMIT) {
+        fill(255, 50, 50); // Red for danger
+      } else if (currentDistance >= WATER_LIMIT - 5) {
+        fill(255, 200, 50); // Yellow for warning
+      } else {
+        fill(50, 255, 100); // Green for safe
+      }
+      textSize(36);
+      text(currentDistance.toFixed(1) + " cm", 70, tankY + 140);
+      
+      fill(200);
+      textSize(16);
+      text("Safety Limit: " + WATER_LIMIT + " cm", 70, tankY + 200);
+      text("Status: " + (currentDistance >= WATER_LIMIT ? "FLOODING / MOTOR STOP" : "NORMAL"), 70, tankY + 230);
+
+      // 5. UI: RIGHT SIDE TANK & WAVE ANIMATION
+      fill(20);
+      stroke(150);
+      strokeWeight(4);
+      rect(tankX, tankY, tankW, tankH);
+
+      // MAPPING UPDATE: 0 = Bottom of tank, TANK_DEPTH = Top of tank
+      let waterY = map(currentDistance, 0, TANK_DEPTH, tankY + tankH, tankY);
+      waterY = constrain(waterY, tankY, tankY + tankH);
+
+      noStroke();
+      fill(0, 150, 255, 200); 
+      
+      beginShape();
+      for (let x = tankX; x <= tankX + tankW; x += 5) {
+        let waveAmplitude = (waterY >= tankY + tankH) ? 0 : 8; 
+        let y = waterY + sin(waveTime + x * 0.05) * waveAmplitude;
+        y = constrain(y, tankY, tankY + tankH); 
+        vertex(x, y);
+      }
+      
+      vertex(tankX + tankW, tankY + tankH);
+      vertex(tankX, tankY + tankH);
+      endShape(CLOSE);
+
+      noFill();
+      stroke(200);
+      strokeWeight(4);
+      rect(tankX, tankY, tankW, tankH);
+
+      waveTime += 0.08;
+
+      // 6. FLOOD NOTIFICATION SYSTEM
+      if (currentDistance >= WATER_LIMIT) {
+        if (frameCount % 60 < 30) {
+          fill(255, 0, 0);
+          noStroke();
+          textAlign(CENTER, CENTER);
+          textSize(22);
+          text("⚠️ WARNING: MAXIMUM WATER LEVEL EXCEEDED ⚠️", width / 2, 115);
+        }
+        
+        if (!floodAlertTriggered) {
+          setTimeout(() => {
+            alert("AQUA-VOLT NOTIFICATION:\n\nMaximum water limit exceeded! Emergency motor shutdown active.");
+          }, 50); 
+          floodAlertTriggered = true;
+        }
+      } else {
+        floodAlertTriggered = false;
+      }
+    }
+
+    // --- BUTTON CLICK EVENT ---
+    function mousePressed() {
+      // Check if mouse clicks inside the Test Mode button
+      if (mouseX > btnX && mouseX < btnX + btnW && mouseY > btnY && mouseY < btnY + btnH) {
+        testMode = !testMode;
+      }
+    }
+
+    // --- WI-FI DATA FUNCTION ---
+    function getWaterLevelFromESP32() {
+      fetch(ESP32_IP)
+        .then(response => response.json()) 
+        .then(data => {
+          if (data.waterLevel !== undefined) {
+            currentDistance = data.waterLevel; 
+          }
+        })
+        .catch(error => {
+          // console.log("ESP32 not connected.");
+        });
+    }
+  </script>
+</body>
+</html>
